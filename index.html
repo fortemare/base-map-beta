@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>fortemare base map - beta version</title>
+    <meta name="description" content="OpenStreetMap with clustered pins, shape layers, and route layers">
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@100..900&family=Geist+Mono:wght@100..900&display=swap" rel="stylesheet">
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    
+    <!-- Leaflet MarkerCluster CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="css/styles.css">
+    
+</head>
+<body>
+    <main class="main-container">
+        <div class="container">
+    
+            <!-- Loading indicator -->
+            <div id="loading" class="loading-container">
+                <div class="loading-text">Loading map...</div>
+            </div>
+            
+            <!-- Layer Controls -->
+            <div id="layer-controls" class="layer-controls-card" style="display: none;">
+                <div class="controls-grid">
+                    <div class="control-item">
+                        <input type="checkbox" id="towers" checked>
+                        <label for="towers" class="control-label">Towers</label>
+                    </div>
+
+                    <div class="control-item">
+                        <input type="checkbox" id="mazara" checked>
+                        <label for="mazara" class="control-label">Val di Mazara</label>
+                    </div>
+
+                    <div class="control-item">
+                        <input type="checkbox" id="noto" checked>
+                        <label for="noto" class="control-label">Val di Noto</label>
+                    </div>
+
+                    <div class="control-item">
+                        <input type="checkbox" id="demone" checked>
+                        <label for="demone" class="control-label">Val Demone</label>
+                    </div>
+
+
+                </div>
+            </div>
+            
+            <!-- Map Container -->
+            <div class="map-card">
+                <div id="map" class="map-container"></div>
+            </div>
+        </div>
+    </main>
+    
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    
+    <!-- Leaflet MarkerCluster JS -->
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+    
+    <!-- Custom JavaScript -->
+    <script src="js/script-2.js"></script>
+</body>
+</html>
