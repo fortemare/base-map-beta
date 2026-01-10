@@ -9,7 +9,12 @@ const layerStates = {}
 // `alwaysVisible` = true → ignore zoom thresholds
 const layerRegistry = {
   percorso_a: { url: "data/percorsi/percorso-a_consigliato.geojson", loader: loadPercorsoA, alwaysVisible: true },
-  percorso_a_torri: { url: "data/towers.geojson", loader: loadPercorsoATorri, alwaysVisible: false }
+  percorso_marittimo: { url: "data/percorsi/percorso-marittimo.geojson", loader: loadPercorsoMarittimo, alwaysVisible: false }, 
+  towers: { url: "data/towers.geojson", loader: loadPercorsoATorri, alwaysVisible: true },
+  aree_archeologiche: { url: "data/aree_archeologiche.geojson", loader: loadPercorsoAAreeArcheologiche, alwaysVisible: true },
+  aree_marine_protette: { url: "data/aree-marine-protette.geojson", loader: loadAreeMarineProtette, alwaysVisible: true },  
+  riserve_regionali: { url: "data/riserve-regionali.geojson", loader: loadRiserveRegionali, alwaysVisible: true },
+
 }
 
 // -------------------- Initialization --------------------
@@ -325,14 +330,32 @@ function loadScript(url) {
   })
 }
 
-// Ensure proj4 is available and EPSG:32633 is defined
-async function ensureProj4() {
-  if (window.proj4) return
-  await loadScript("https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js")
-  if (!window.proj4) throw new Error("proj4 failed to load")
+// Ensure proj4 is available and optionally load a specific EPSG definition (fetched from epsg.io when needed)
+async function ensureProj4(requiredCode) {
+  if (!window.proj4) {
+    await loadScript("https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js")
+    if (!window.proj4) throw new Error("proj4 failed to load")
+  }
+
+  // Ensure a basic known definition exists
   if (!proj4.defs || !proj4.defs['EPSG:32633']) {
-    // UTM zone 33N, WGS84
     proj4.defs('EPSG:32633', '+proj=utm +zone=33 +datum=WGS84 +units=m +no_defs')
+  }
+
+  // If a specific EPSG code is requested and not yet defined, fetch it from epsg.io
+  if (requiredCode) {
+    const key = `EPSG:${requiredCode}`
+    if (!proj4.defs[key]) {
+      try {
+        const res = await fetch(`https://epsg.io/${requiredCode}.proj4`)
+        if (!res.ok) throw new Error(`Failed to fetch proj4 definition for EPSG:${requiredCode}`)
+        const proj4def = (await res.text()).trim()
+        if (proj4def) proj4.defs(key, proj4def)
+      } catch (err) {
+        console.warn(`Could not load proj4 def for EPSG:${requiredCode}:`, err)
+        // let the caller decide how to handle missing defs
+      }
+    }
   }
 }
 
@@ -423,13 +446,150 @@ async function loadPercorsoATorri() {
     onEachFeature: (feature, layer) => {
       const title = feature.properties?.DENOM || feature.properties?.name || (feature.properties?.id ? `ID: ${feature.properties.id}` : '')
       const percorsoVal = feature.properties?.percorso ?? ''
-      if (title) layer.bindPopup(`<strong>${title}</strong><br>${feature.properties?.description || ''}<br><em>percorso: ${percorsoVal}</em>`)
+      if (title) layer.bindPopup(`<strong>${title}</strong><br>${feature.properties?.description || ''}`)
     },
   })
 
   // register with the same key used in layerRegistry and control IDs
-  registerLayer("percorso_a_torri", percorsoATorriLayer)
+  registerLayer("towers", percorsoATorriLayer)
 
-  if (canShowLayer("percorso_a_torri", map.getZoom())) map.addLayer(percorsoATorriLayer)
+  if (canShowLayer("towers", map.getZoom())) map.addLayer(percorsoATorriLayer)
+}
+
+// Percorso Marittimo (respect zoom)
+async function loadPercorsoMarittimo() {
+  const data = await fetchWithTimeout("data/percorsi/percorso-a_marittimo.geojson")
+
+  // If file declares a projected CRS, reproject to WGS84
+  const crsName = data?.crs?.properties?.name || ''
+  if (/32633/.test(crsName) || /EPSG:\:\:32633/.test(crsName)) {
+    await ensureProj4()
+    reprojectGeoJSON(data, 'EPSG:32633', 'WGS84')
+  }
+
+  const percorsoMarittimoLayer = L.geoJSON(data, {
+    style: {
+      color: "#0000ffff",
+      weight: 3,
+      opacity: 1,
+      dashArray: "8,4",
+    },
+    onEachFeature: (feature, layer) => {
+      const title = feature.properties?.DENOM || feature.properties?.name || (feature.properties?.id ? `ID: ${feature.properties.id}` : '')
+      if (title) layer.bindPopup(`<strong>${title}</strong><br>${feature.properties?.description || ''}`)
+    },
+  })
+
+  // register with the same key used in layerRegistry and control IDs
+  registerLayer("percorso_marittimo", percorsoMarittimoLayer)
+
+  if (canShowLayer("percorso_marittimo", map.getZoom())) map.addLayer(percorsoMarittimoLayer)
+}
+
+// Percorso A - Aree Archeologiche (respect zoom)
+async function loadPercorsoAAreeArcheologiche() {
+  const data = await fetchWithTimeout("data/aree-archeologiche.geojson")
+
+  // If file declares a projected CRS, reproject to WGS84
+  const crsName = data?.crs?.properties?.name || ''
+  if (/32633/.test(crsName) || /EPSG:\:\:32633/.test(crsName)) {
+    await ensureProj4()
+    reprojectGeoJSON(data, 'EPSG:32633', 'WGS84')
+  }
+
+  const percorsoAAreeArcheologicheLayer = L.geoJSON(data, {
+    // Load only features explicitly assigned to percorso-a
+    filter: (feature) => feature?.properties?.percorso === 'percorso-a',
+    style: {
+      color: "#00aa00ff",
+      weight: 3,
+      opacity: 1,
+    },
+    onEachFeature: (feature, layer) => {
+      const title = feature.properties?.DENOM || feature.properties?.name || feature.properties?.['SITIPOLY-ID'] || (feature.properties?.id ? `ID: ${feature.properties.id}` : '')
+      if (title) layer.bindPopup(`<strong>${title}</strong><br>${feature.properties?.description || ''}`)
+    },
+  })
+
+  // register with the same key used in layerRegistry and control IDs
+  registerLayer("aree_archeologiche", percorsoAAreeArcheologicheLayer)
+
+  if (canShowLayer("aree_archeologiche", map.getZoom())) map.addLayer(percorsoAAreeArcheologicheLayer)
+}  
+
+// Aree Marine Protette (respect zoom)
+async function loadAreeMarineProtette() {
+  const data = await fetchWithTimeout("data/aree-marine-protette.geojson")
+
+  // If file declares a projected CRS, attempt to reproject to WGS84
+  const crsName = data?.crs?.properties?.name || ''
+  const codeMatch = crsName.match(/(\d{3,5})/)
+  if (codeMatch) {
+    const code = codeMatch[1]
+    await ensureProj4(code)
+    const key = `EPSG:${code}`
+    if (proj4.defs && proj4.defs[key]) {
+      reprojectGeoJSON(data, key, 'WGS84')
+    } else {
+      console.warn(`CRS ${crsName} detected but no proj4 definition available for EPSG:${code}; skipping reprojection`)
+    }
+  }
+
+  const areeMarineProtetteLayer = L.geoJSON(data, {
+    filter: (feature) => feature?.properties?.percorso === 'percorso-a',
+    style: {
+      color: "#0000ffff",
+      weight: 2,
+      opacity: 0.7,
+      fillOpacity: 0.2,
+    },
+    onEachFeature: (feature, layer) => {
+      const title = feature.properties?.nome_gazze || ''
+      if (title) layer.bindPopup(`<strong>${title}</strong><br>${feature.properties?.description || ''}`)
+    },
+  })
+
+  // register with the same key used in layerRegistry and control IDs
+  registerLayer("aree_marine_protette", areeMarineProtetteLayer)
+
+  if (canShowLayer("aree_marine_protette", map.getZoom())) map.addLayer(areeMarineProtetteLayer)
+}
+
+// Riserve Regionali (respect zoom)
+async function loadRiserveRegionali() {
+  const data = await fetchWithTimeout("data/riserve-regionali.geojson")
+
+    // If file declares a projected CRS, attempt to reproject to WGS84
+  const crsName = data?.crs?.properties?.name || ''
+  const codeMatch = crsName.match(/(\d{3,5})/)
+  if (codeMatch) {
+    const code = codeMatch[1]
+    await ensureProj4(code)
+    const key = `EPSG:${code}`
+    if (proj4.defs && proj4.defs[key]) {
+      reprojectGeoJSON(data, key, 'WGS84')
+    } else {
+      console.warn(`CRS ${crsName} detected but no proj4 definition available for EPSG:${code}; skipping reprojection`)
+    }
+  }
+
+  const riserveRegionaliLayer = L.geoJSON(data, {
+    filter: (feature) => feature?.properties?.percorso === 'percorso-a',
+    style: {
+      color: "#ffaa00ff",
+      weight: 2,
+      opacity: 0.7,
+      fillOpacity: 0.2,
+    },
+    onEachFeature: (feature, layer) => {
+      const title = feature.properties?.DENOM || feature.properties?.name || (feature.properties?.id ? `ID: ${feature.properties.id}` : '')
+      if (title) layer.bindPopup(`<strong>${title}</strong><br>${feature.properties?.description || ''}`)
+    },
+  })
+
+  // register with the same key used in layerRegistry and control IDs
+  registerLayer("riserve_regionali", riserveRegionaliLayer)
+
+  if (canShowLayer("riserve_regionali", map.getZoom())) map.addLayer(riserveRegionaliLayer)
 }
 
