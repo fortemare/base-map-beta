@@ -172,6 +172,17 @@ body {
   -webkit-filter: none !important;
 }
 
+/* Cluster */
+.marker-cluster, .marker-cluster div {
+  background: #ff5500; /* colore desiderato */
+  /*box-shadow: 0 0 0 2px rgba(255,255,255,0.6) inset;*/
+}
+
+.marker-cluster span {
+  color: #ffffff !important;
+  font-weight: 700;
+}
+
 /* Responsive design */
 @media (max-width: 768px) {
   .container {

@@ -1,21 +1,22 @@
-/* Fortemare Base Map Beta Version */
+/* Fortemare Base Map Beta Version - Uniform loaders */
 
-// Global variables
+// -------------------- Global variables --------------------
 let map = null
 const layers = {}
 const layerStates = {}
 
-// Layer registry: add new layers here
-// `alwaysVisible` = true → ignore zoom thresholds
+// Layer registry
 const layerRegistry = {
   percorso_a: { url: "data/percorsi/percorso-a_consigliato.geojson", loader: loadPercorsoA, alwaysVisible: true },
-  percorso_marittimo: { url: "data/percorsi/percorso-marittimo.geojson", loader: loadPercorsoMarittimo, alwaysVisible: false }, 
+  percorso_marittimo: { url: "data/percorsi/percorso-marittimo.geojson", loader: loadPercorsoMarittimo, alwaysVisible: false },
   towers: { url: "data/towers.geojson", loader: loadPercorsoATorri, alwaysVisible: true },
   aree_archeologiche: { url: "data/aree_archeologiche.geojson", loader: loadPercorsoAAreeArcheologiche, alwaysVisible: true },
-  aree_marine_protette: { url: "data/aree-marine-protette.geojson", loader: loadAreeMarineProtette, alwaysVisible: true },  
+  aree_marine_protette: { url: "data/aree-marine-protette.geojson", loader: loadAreeMarineProtette, alwaysVisible: true },
   riserve_regionali: { url: "data/riserve-regionali.geojson", loader: loadRiserveRegionali, alwaysVisible: true },
-
 }
+
+// cache per evitare duplicati (SVG inline)
+const svgPatternsLoaded = new Set()
 
 // -------------------- Initialization --------------------
 document.addEventListener("DOMContentLoaded", () => {
@@ -67,9 +68,7 @@ function initializeMap() {
 // -------------------- Zoom & Visibility --------------------
 function canShowLayer(layerName, zoom) {
   const SHAPES_MIN_ZOOM = 2
-  const ROUTES_MIN_ZOOM = 12
   if (layerName === "percorso_a") return zoom >= SHAPES_MIN_ZOOM
-  //if (layerName === "routes") return zoom >= ROUTES_MIN_ZOOM
   return true
 }
 
@@ -99,13 +98,11 @@ function toggleLayer(layerName) {
   const currentZoom = map.getZoom()
   const { alwaysVisible } = layerRegistry[layerName] || {}
 
-  // Remove if unchecked
   if (!newState && map.hasLayer(layers[layerName])) {
     map.removeLayer(layers[layerName])
     showLayerFeedback(`${layerName} layer disabled`)
   }
 
-  // Add if checked and either always visible or zoom allows
   if (newState && (alwaysVisible || canShowLayer(layerName, currentZoom))) {
     if (!map.hasLayer(layers[layerName])) {
       map.addLayer(layers[layerName])
@@ -170,7 +167,9 @@ function showLayerFeedback(message) {
   }
   feedback.textContent = message
   feedback.style.opacity = "1"
-  setTimeout(() => { feedback.style.opacity = "0" }, 2000)
+  setTimeout(() => {
+    feedback.style.opacity = "0"
+  }, 2000)
 }
 
 function registerLayer(layerName, layerObject) {
@@ -234,7 +233,6 @@ async function loadGeoJSONLayers() {
       updateLoadingProgress("Map ready!")
       setTimeout(() => hideLoadingIndicator(), 500)
     }, 500)
-
   } catch (error) {
     console.error("Error loading layers:", error)
     showErrorMessage("Failed to load map data. Please refresh the page.")
@@ -249,6 +247,7 @@ async function loadLayerWithRetry(layerName, loadFunction, loadingStates, maxRet
       loadingStates[layerName] = true
       return
     } catch (error) {
+      console.warn(`Load failed for ${layerName} (attempt ${attempt}/${maxRetries})`, error)
       if (attempt === maxRetries) {
         loadingStates[layerName] = false
         setTimeout(() => {
@@ -262,7 +261,7 @@ async function loadLayerWithRetry(layerName, loadFunction, loadingStates, maxRet
           }
         }, 100)
       } else {
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt))
+        await new Promise((resolve) => setTimeout(resolve, 1000 * attempt))
       }
     }
   }
@@ -316,9 +315,7 @@ async function fetchWithTimeout(url, timeout = 10000) {
   }
 }
 
-// -------------------- Layer Loaders --------------------
-
-// Utility: dynamically load a script
+// -------------------- Proj utils --------------------
 function loadScript(url) {
   return new Promise((resolve, reject) => {
     const s = document.createElement("script")
@@ -330,19 +327,16 @@ function loadScript(url) {
   })
 }
 
-// Ensure proj4 is available and optionally load a specific EPSG definition (fetched from epsg.io when needed)
 async function ensureProj4(requiredCode) {
   if (!window.proj4) {
     await loadScript("https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js")
     if (!window.proj4) throw new Error("proj4 failed to load")
   }
 
-  // Ensure a basic known definition exists
-  if (!proj4.defs || !proj4.defs['EPSG:32633']) {
-    proj4.defs('EPSG:32633', '+proj=utm +zone=33 +datum=WGS84 +units=m +no_defs')
+  if (!proj4.defs || !proj4.defs["EPSG:32633"]) {
+    proj4.defs("EPSG:32633", "+proj=utm +zone=33 +datum=WGS84 +units=m +no_defs")
   }
 
-  // If a specific EPSG code is requested and not yet defined, fetch it from epsg.io
   if (requiredCode) {
     const key = `EPSG:${requiredCode}`
     if (!proj4.defs[key]) {
@@ -353,19 +347,16 @@ async function ensureProj4(requiredCode) {
         if (proj4def) proj4.defs(key, proj4def)
       } catch (err) {
         console.warn(`Could not load proj4 def for EPSG:${requiredCode}:`, err)
-        // let the caller decide how to handle missing defs
       }
     }
   }
 }
 
-// Reproject GeoJSON coordinates from `fromProj` to `toProj`
-function reprojectGeoJSON(geojson, fromProj = 'EPSG:32633', toProj = 'WGS84') {
+function reprojectGeoJSON(geojson, fromProj = "EPSG:32633", toProj = "WGS84") {
   if (!geojson || !geojson.features) return
 
   const transformCoords = (coords) => {
-    if (typeof coords[0] === 'number' && typeof coords[1] === 'number') {
-      // coords: [x, y]
+    if (typeof coords[0] === "number" && typeof coords[1] === "number") {
       const [lon, lat] = proj4(fromProj, toProj, coords)
       return [lon, lat]
     }
@@ -377,219 +368,273 @@ function reprojectGeoJSON(geojson, fromProj = 'EPSG:32633', toProj = 'WGS84') {
     feat.geometry.coordinates = transformCoords(feat.geometry.coordinates)
   })
 
-  // Remove CRS to avoid confusion
   if (geojson.crs) delete geojson.crs
 }
 
-// Percorso A (respect zoom) — now handles EPSG:32633 by reprojecting to WGS84
-async function loadPercorsoA() {
-  const data = await fetchWithTimeout("data/percorsi/percorso-a_consigliato.geojson")
+// -------------------- NEW: Shared helpers (NO plugin) --------------------
+async function loadGeoJsonReprojected(url) {
+  const data = await fetchWithTimeout(url)
 
-  // If file declares a projected CRS, reproject to WGS84
-  const crsName = data?.crs?.properties?.name || ''
-  if (/32633/.test(crsName) || /EPSG:\:\:32633/.test(crsName)) {
+  const crsName = data?.crs?.properties?.name || ""
+  const has32633 = /32633/.test(crsName) || /EPSG:\:\:32633/.test(crsName)
+  const codeMatch = crsName.match(/(\d{3,5})/)
+
+  if (has32633) {
     await ensureProj4()
-    reprojectGeoJSON(data, 'EPSG:32633', 'WGS84')
+    reprojectGeoJSON(data, "EPSG:32633", "WGS84")
+    return data
   }
 
-  const percorsoALayer = L.geoJSON(data, {
+  if (codeMatch) {
+    const code = codeMatch[1]
+    await ensureProj4(code)
+    const key = `EPSG:${code}`
+    if (proj4?.defs?.[key]) reprojectGeoJSON(data, key, "WGS84")
+    else console.warn(`CRS ${crsName} detected but no proj4 definition available for EPSG:${code}; skipping reprojection`)
+  }
+
+  return data
+}
+
+function applyInlinePatternOnAdd(layer, patternId) {
+  if (!patternId) return
+  layer.on("add", () => {
+    requestAnimationFrame(() => {
+      const el = layer.getElement && layer.getElement()
+      if (!el) return
+      const nodes = el.nodeName === "g" ? el.querySelectorAll("path,polygon,rect") : [el]
+      nodes.forEach((n) => n.setAttribute("fill", `url(#${patternId})`))
+    })
+  })
+}
+
+async function buildGeoJsonLayer({
+  layerName,
+  url,
+  filterFn,
+  style,
+  popupTitleFn,
+  popupBodyFn,
+  inlinePattern, // { id, url, w, h } or null
+  autoAdd = true,
+}) {
+  const data = await loadGeoJsonReprojected(url)
+
+  let inlinePatternId = null
+  if (inlinePattern) {
+    inlinePatternId = await ensureSvgPattern(
+      inlinePattern.id,
+      inlinePattern.url,
+      inlinePattern.w ?? 40,
+      inlinePattern.h ?? 40
+    )
+  }
+
+  const geoLayer = L.geoJSON(data, {
+    filter: filterFn,
+    style: typeof style === "function" ? style : style,
+    onEachFeature: (feature, layer) => {
+      const title = popupTitleFn?.(feature) || ""
+      const body = popupBodyFn?.(feature) || ""
+      if (title || body) layer.bindPopup(`<strong>${title}</strong><br>${body}`)
+      if (inlinePatternId) applyInlinePatternOnAdd(layer, inlinePatternId)
+    },
+  })
+
+  registerLayer(layerName, geoLayer)
+
+  if (autoAdd && map && canShowLayer(layerName, map.getZoom())) {
+    map.addLayer(geoLayer)
+  }
+
+  return geoLayer
+}
+
+// -------------------- Layer Loaders (uniform) --------------------
+
+// Percorso A (line)
+async function loadPercorsoA() {
+  const layer = await buildGeoJsonLayer({
+    layerName: "percorso_a",
+    url: "data/percorsi/percorso-a_consigliato.geojson",
     style: {
       color: "#1100ffff",
       weight: 3,
       opacity: 1,
-      //dashArray: "3",
     },
-    onEachFeature: (feature, layer) => {
-      const title = feature.properties?.DENOM || feature.properties?.name || (feature.properties?.id ? `ID: ${feature.properties.id}` : '')
-      if (title) layer.bindPopup(`<strong>${title}</strong><br>${feature.properties?.description || ''}`)
-    },
+    popupTitleFn: (f) =>
+      f.properties?.DENOM || f.properties?.name || (f.properties?.id ? `ID: ${f.properties.id}` : ""),
+    popupBodyFn: (f) => f.properties?.description || "",
+    inlinePattern: null,
   })
 
-  // register with the same key used in layerRegistry and control IDs
-  registerLayer("percorso_a", percorsoALayer)
-
-  // Center map on percorso_a: fit bounds if available
-  if (map) {
-    const bounds = percorsoALayer.getBounds()
-    if (bounds && typeof bounds.isValid === 'function' ? bounds.isValid() : (bounds && bounds.getNorthWest)) {
+  // fit bounds
+  if (map && layer?.getBounds) {
+    const bounds = layer.getBounds()
+    const ok = bounds && (typeof bounds.isValid === "function" ? bounds.isValid() : true)
+    if (ok) {
       try {
         map.fitBounds(bounds, { padding: [30, 30], maxZoom: 15 })
       } catch (e) {
-        console.warn('fitBounds failed:', e)
+        console.warn("fitBounds failed:", e)
       }
     }
   }
-
-  if (canShowLayer("percorso_a", map.getZoom())) map.addLayer(percorsoALayer)
 }
 
-// Percorso A - Torri (respect zoom)
-async function loadPercorsoATorri() {
-  const data = await fetchWithTimeout("data/towers.geojson")
-
-  // If file declares a projected CRS, reproject to WGS84
-  const crsName = data?.crs?.properties?.name || ''
-  if (/32633/.test(crsName) || /EPSG:\:\:32633/.test(crsName)) {
-    await ensureProj4()
-    reprojectGeoJSON(data, 'EPSG:32633', 'WGS84')
-  }
-
-  const percorsoATorriLayer = L.geoJSON(data, {
-    // Load only features explicitly assigned to percorso-a
-    filter: (feature) => feature?.properties?.percorso === 'percorso-a',
-    style: {
-      color: "#ff5500ff",
-      weight: 3,
-      opacity: 1,
-      //dashArray: "5,5",
-    },
-    onEachFeature: (feature, layer) => {
-      const title = feature.properties?.DENOM || feature.properties?.name || (feature.properties?.id ? `ID: ${feature.properties.id}` : '')
-      const percorsoVal = feature.properties?.percorso ?? ''
-      if (title) layer.bindPopup(`<strong>${title}</strong><br>${feature.properties?.description || ''}`)
-    },
-  })
-
-  // register with the same key used in layerRegistry and control IDs
-  registerLayer("towers", percorsoATorriLayer)
-
-  if (canShowLayer("towers", map.getZoom())) map.addLayer(percorsoATorriLayer)
-}
-
-// Percorso Marittimo (respect zoom)
+// Percorso Marittimo (line)
 async function loadPercorsoMarittimo() {
-  const data = await fetchWithTimeout("data/percorsi/percorso-a_marittimo.geojson")
-
-  // If file declares a projected CRS, reproject to WGS84
-  const crsName = data?.crs?.properties?.name || ''
-  if (/32633/.test(crsName) || /EPSG:\:\:32633/.test(crsName)) {
-    await ensureProj4()
-    reprojectGeoJSON(data, 'EPSG:32633', 'WGS84')
-  }
-
-  const percorsoMarittimoLayer = L.geoJSON(data, {
+  await buildGeoJsonLayer({
+    layerName: "percorso_marittimo",
+    url: "data/percorsi/percorso-a_marittimo.geojson",
     style: {
       color: "#0000ffff",
       weight: 3,
       opacity: 1,
       dashArray: "8,4",
     },
-    onEachFeature: (feature, layer) => {
-      const title = feature.properties?.DENOM || feature.properties?.name || (feature.properties?.id ? `ID: ${feature.properties.id}` : '')
-      if (title) layer.bindPopup(`<strong>${title}</strong><br>${feature.properties?.description || ''}`)
-    },
+    popupTitleFn: (f) =>
+      f.properties?.DENOM || f.properties?.name || (f.properties?.id ? `ID: ${f.properties.id}` : ""),
+    popupBodyFn: (f) => f.properties?.description || "",
+    inlinePattern: null,
   })
-
-  // register with the same key used in layerRegistry and control IDs
-  registerLayer("percorso_marittimo", percorsoMarittimoLayer)
-
-  if (canShowLayer("percorso_marittimo", map.getZoom())) map.addLayer(percorsoMarittimoLayer)
 }
 
-// Percorso A - Aree Archeologiche (respect zoom)
+// Aree Archeologiche (polygon + inline pattern)
 async function loadPercorsoAAreeArcheologiche() {
-  const data = await fetchWithTimeout("data/aree-archeologiche.geojson")
-
-  // If file declares a projected CRS, reproject to WGS84
-  const crsName = data?.crs?.properties?.name || ''
-  if (/32633/.test(crsName) || /EPSG:\:\:32633/.test(crsName)) {
-    await ensureProj4()
-    reprojectGeoJSON(data, 'EPSG:32633', 'WGS84')
-  }
-
-  const percorsoAAreeArcheologicheLayer = L.geoJSON(data, {
-    // Load only features explicitly assigned to percorso-a
-    filter: (feature) => feature?.properties?.percorso === 'percorso-a',
-    style: {
+  await buildGeoJsonLayer({
+    layerName: "aree_archeologiche",
+    url: "data/aree-archeologiche.geojson",
+    filterFn: (f) => f?.properties?.percorso === "percorso-a",
+    style: () => ({
       color: "#00aa00ff",
       weight: 3,
       opacity: 1,
-    },
-    onEachFeature: (feature, layer) => {
-      const title = feature.properties?.DENOM || feature.properties?.name || feature.properties?.['SITIPOLY-ID'] || (feature.properties?.id ? `ID: ${feature.properties.id}` : '')
-      if (title) layer.bindPopup(`<strong>${title}</strong><br>${feature.properties?.description || ''}`)
-    },
+      fillOpacity: 1,
+      fillColor: "#ffffff", // base (verrà sovrascritto dal pattern via attribute)
+    }),
+    popupTitleFn: (f) =>
+      f.properties?.DENOM || f.properties?.name || f.properties?.["SITIPOLY-ID"] || "",
+    popupBodyFn: (f) => f.properties?.description || "",
+    inlinePattern: { id: "arch-pattern", url: "icons/arch-pattern.svg", w: 40, h: 40 },
   })
+}
 
-  // register with the same key used in layerRegistry and control IDs
-  registerLayer("aree_archeologiche", percorsoAAreeArcheologicheLayer)
-
-  if (canShowLayer("aree_archeologiche", map.getZoom())) map.addLayer(percorsoAAreeArcheologicheLayer)
-}  
-
-// Aree Marine Protette (respect zoom)
+// Aree Marine Protette (polygon + inline pattern)
 async function loadAreeMarineProtette() {
-  const data = await fetchWithTimeout("data/aree-marine-protette.geojson")
-
-  // If file declares a projected CRS, attempt to reproject to WGS84
-  const crsName = data?.crs?.properties?.name || ''
-  const codeMatch = crsName.match(/(\d{3,5})/)
-  if (codeMatch) {
-    const code = codeMatch[1]
-    await ensureProj4(code)
-    const key = `EPSG:${code}`
-    if (proj4.defs && proj4.defs[key]) {
-      reprojectGeoJSON(data, key, 'WGS84')
-    } else {
-      console.warn(`CRS ${crsName} detected but no proj4 definition available for EPSG:${code}; skipping reprojection`)
-    }
-  }
-
-  const areeMarineProtetteLayer = L.geoJSON(data, {
-    filter: (feature) => feature?.properties?.percorso === 'percorso-a',
-    style: {
+  await buildGeoJsonLayer({
+    layerName: "aree_marine_protette",
+    url: "data/aree-marine-protette.geojson",
+    filterFn: (f) => f?.properties?.percorso === "percorso-a",
+    style: () => ({
       color: "#0000ffff",
       weight: 2,
       opacity: 0.7,
-      fillOpacity: 0.2,
-    },
-    onEachFeature: (feature, layer) => {
-      const title = feature.properties?.nome_gazze || ''
-      if (title) layer.bindPopup(`<strong>${title}</strong><br>${feature.properties?.description || ''}`)
-    },
+      fillOpacity: 1,
+      fillColor: "#ffffff",
+    }),
+    popupTitleFn: (f) => f.properties?.nome_gazze || "",
+    popupBodyFn: (f) => f.properties?.description || "",
+    inlinePattern: { id: "aree-marine-pattern", url: "icons/aree-marine-pattern.svg", w: 40, h: 40 },
   })
-
-  // register with the same key used in layerRegistry and control IDs
-  registerLayer("aree_marine_protette", areeMarineProtetteLayer)
-
-  if (canShowLayer("aree_marine_protette", map.getZoom())) map.addLayer(areeMarineProtetteLayer)
 }
 
-// Riserve Regionali (respect zoom)
+// Riserve Regionali (polygon + inline pattern)
 async function loadRiserveRegionali() {
-  const data = await fetchWithTimeout("data/riserve-regionali.geojson")
-
-    // If file declares a projected CRS, attempt to reproject to WGS84
-  const crsName = data?.crs?.properties?.name || ''
-  const codeMatch = crsName.match(/(\d{3,5})/)
-  if (codeMatch) {
-    const code = codeMatch[1]
-    await ensureProj4(code)
-    const key = `EPSG:${code}`
-    if (proj4.defs && proj4.defs[key]) {
-      reprojectGeoJSON(data, key, 'WGS84')
-    } else {
-      console.warn(`CRS ${crsName} detected but no proj4 definition available for EPSG:${code}; skipping reprojection`)
-    }
-  }
-
-  const riserveRegionaliLayer = L.geoJSON(data, {
-    filter: (feature) => feature?.properties?.percorso === 'percorso-a',
-    style: {
-      color: "#ffaa00ff",
+  await buildGeoJsonLayer({
+    layerName: "riserve_regionali",
+    url: "data/riserve-regionali.geojson",
+    filterFn: (f) => f?.properties?.percorso === "percorso-a",
+    style: () => ({
+      color: "#8dcd1fff",
       weight: 2,
       opacity: 0.7,
-      fillOpacity: 0.2,
-    },
-    onEachFeature: (feature, layer) => {
-      const title = feature.properties?.DENOM || feature.properties?.name || (feature.properties?.id ? `ID: ${feature.properties.id}` : '')
-      if (title) layer.bindPopup(`<strong>${title}</strong><br>${feature.properties?.description || ''}`)
+      fillOpacity: 1,
+      fillColor: "#ffffff",
+    }),
+    popupTitleFn: (f) => f.properties?.nome_gazze || f.properties?.DENOM || f.properties?.name || "",
+    popupBodyFn: (f) => f.properties?.description || "",
+    inlinePattern: { id: "riserve-pattern", url: "icons/riserve-pattern.svg", w: 40, h: 40 },
+  })
+}
+
+// Torri (markers + cluster) — left specific but uses shared reprojection
+async function loadPercorsoATorri() {
+  const data = await loadGeoJsonReprojected("data/towers.geojson")
+
+  const towerIcon = L.icon({
+    iconUrl: "icons/tower.svg",
+    iconSize: [32, 40],
+    iconAnchor: [16, 40],
+    popupAnchor: [0, -36],
+  })
+
+  const markersCluster = L.markerClusterGroup()
+
+  const geo = L.geoJSON(data, {
+    filter: (feature) => feature?.properties?.percorso === "percorso-a",
+    pointToLayer: (feature, latlng) => {
+      const marker = L.marker(latlng, { icon: towerIcon })
+      const title = feature.properties?.DENOM || feature.properties?.name || "Torre"
+      marker.bindPopup(`<strong>${title}</strong><br>${feature.properties?.description || ""}`)
+      return marker
     },
   })
 
-  // register with the same key used in layerRegistry and control IDs
-  registerLayer("riserve_regionali", riserveRegionaliLayer)
+  markersCluster.addLayer(geo)
 
-  if (canShowLayer("riserve_regionali", map.getZoom())) map.addLayer(riserveRegionaliLayer)
+  registerLayer("towers", markersCluster)
+  if (canShowLayer("towers", map.getZoom())) map.addLayer(markersCluster)
 }
 
+// -------------------- SVG Pattern injection in Leaflet SVG <defs> --------------------
+async function ensureSvgPattern(patternId, svgUrl, width = 40, height = 40) {
+  if (svgPatternsLoaded.has(patternId)) return patternId
+
+  function waitForMapSvg() {
+    return new Promise((resolve) => {
+      function check() {
+        const svg = document.querySelector("svg.leaflet-zoom-animated")
+        if (svg) resolve(svg)
+        else setTimeout(check, 50)
+      }
+      check()
+    })
+  }
+
+  const svg = await waitForMapSvg()
+
+  let defs = svg.querySelector("defs")
+  if (!defs) {
+    defs = document.createElementNS("http://www.w3.org/2000/svg", "defs")
+    svg.insertBefore(defs, svg.firstChild)
+  }
+
+  if (defs.querySelector(`#${patternId}`)) {
+    svgPatternsLoaded.add(patternId)
+    return patternId
+  }
+
+  const response = await fetch(svgUrl)
+  if (!response.ok) throw new Error(`Pattern SVG not found: ${svgUrl} (${response.status})`)
+  const patternSvgText = await response.text()
+
+  const temp = document.createElement("div")
+  temp.innerHTML = patternSvgText.trim()
+  const patternContent = temp.querySelector("svg") || temp.firstChild
+
+  const pattern = document.createElementNS("http://www.w3.org/2000/svg", "pattern")
+  pattern.setAttribute("id", patternId)
+  pattern.setAttribute("patternUnits", "userSpaceOnUse")
+  pattern.setAttribute("width", width)
+  pattern.setAttribute("height", height)
+
+  while (patternContent.firstChild) {
+    pattern.appendChild(patternContent.firstChild)
+  }
+
+  defs.appendChild(pattern)
+  svgPatternsLoaded.add(patternId)
+
+  return patternId
+}
