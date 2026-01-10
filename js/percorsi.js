@@ -9,7 +9,7 @@ const layerStates = {}
 // `alwaysVisible` = true → ignore zoom thresholds
 const layerRegistry = {
   percorso_a: { url: "data/percorsi/percorso-a_consigliato.geojson", loader: loadPercorsoA, alwaysVisible: true },
-  percorso_a_torri: { url: "data/percorsi/percorso-a_torri.geojson", loader: loadPercorsoATorri, alwaysVisible: false }
+  percorso_a_torri: { url: "data/towers.geojson", loader: loadPercorsoATorri, alwaysVisible: false }
 }
 
 // -------------------- Initialization --------------------
@@ -402,7 +402,7 @@ async function loadPercorsoA() {
 
 // Percorso A - Torri (respect zoom)
 async function loadPercorsoATorri() {
-  const data = await fetchWithTimeout("data/percorsi/percorso-a_torri.geojson")
+  const data = await fetchWithTimeout("data/towers.geojson")
 
   // If file declares a projected CRS, reproject to WGS84
   const crsName = data?.crs?.properties?.name || ''
@@ -412,6 +412,8 @@ async function loadPercorsoATorri() {
   }
 
   const percorsoATorriLayer = L.geoJSON(data, {
+    // Load only features explicitly assigned to percorso-a
+    filter: (feature) => feature?.properties?.percorso === 'percorso-a',
     style: {
       color: "#ff5500ff",
       weight: 3,
@@ -420,7 +422,8 @@ async function loadPercorsoATorri() {
     },
     onEachFeature: (feature, layer) => {
       const title = feature.properties?.DENOM || feature.properties?.name || (feature.properties?.id ? `ID: ${feature.properties.id}` : '')
-      if (title) layer.bindPopup(`<strong>${title}</strong><br>${feature.properties?.description || ''}`)
+      const percorsoVal = feature.properties?.percorso ?? ''
+      if (title) layer.bindPopup(`<strong>${title}</strong><br>${feature.properties?.description || ''}<br><em>percorso: ${percorsoVal}</em>`)
     },
   })
 
