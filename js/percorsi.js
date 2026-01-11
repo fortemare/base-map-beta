@@ -535,7 +535,7 @@ async function loadAreeMarineProtette() {
     }),
     popupTitleFn: (f) => f.properties?.nome_gazze || "",
     popupBodyFn: (f) => f.properties?.description || "",
-    inlinePattern: { id: "aree-marine-pattern", url: "icons/aree-marine-pattern.svg", w: 40, h: 40 },
+    inlinePattern: { id: "aree-marine-pattern", url: "icons/aree-marine-pattern.svg", w: 18, h: 18 },
   })
 }
 
@@ -554,7 +554,7 @@ async function loadRiserveRegionali() {
     }),
     popupTitleFn: (f) => f.properties?.nome_gazze || f.properties?.DENOM || f.properties?.name || "",
     popupBodyFn: (f) => f.properties?.description || "",
-    inlinePattern: { id: "riserve-pattern", url: "icons/riserve-pattern.svg", w: 40, h: 40 },
+    inlinePattern: { id: "riserve-pattern", url: "icons/riserve-pattern.svg", w: 30, h: 30 },
   })
 }
 
@@ -629,6 +629,18 @@ async function ensureSvgPattern(patternId, svgUrl, width = 40, height = 40) {
   pattern.setAttribute("width", width)
   pattern.setAttribute("height", height)
 
+  // Calcola la scala rispetto al viewBox originale
+  const viewBox = patternContent.getAttribute && patternContent.getAttribute("viewBox");
+  let baseSize = 40; // fallback
+  if (viewBox) {
+    const parts = viewBox.split(/\s+/);
+    if (parts.length === 4) baseSize = parseFloat(parts[2]);
+  }
+  if (width !== baseSize) {
+    const scale = width / baseSize;
+    pattern.setAttribute("patternTransform", `scale(${scale})`);
+  }
+
   while (patternContent.firstChild) {
     pattern.appendChild(patternContent.firstChild)
   }
@@ -637,4 +649,50 @@ async function ensureSvgPattern(patternId, svgUrl, width = 40, height = 40) {
   svgPatternsLoaded.add(patternId)
 
   return patternId
+}
+
+
+// -------------------- Export Leaflet Vectors to SVG --------------------      
+function exportLeafletVectorsToSVG(filename = "fortemare-vectors.svg") {
+  // Leaflet vector renderer (SVG)
+  const svg = document.querySelector("svg.leaflet-zoom-animated")
+  if (!svg) {
+    console.warn("Nessun SVG Leaflet trovato. Probabile rendering Canvas o nessun layer vettoriale visibile.")
+    return
+  }
+
+  // Clona l'SVG (include path, polygon, defs, pattern, ecc.)
+  const clone = svg.cloneNode(true)
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg")
+
+  // Dimensioni del viewport corrente
+  const rect = svg.getBoundingClientRect()
+  const w = Math.max(1, Math.round(rect.width))
+  const h = Math.max(1, Math.round(rect.height))
+
+  clone.setAttribute("width", String(w))
+  clone.setAttribute("height", String(h))
+  clone.setAttribute("viewBox", `0 0 ${w} ${h}`)
+
+  // Serializza
+  const serializer = new XMLSerializer()
+  let svgText = serializer.serializeToString(clone)
+
+  // Alcuni editor preferiscono che l'header XML sia presente
+  if (!svgText.startsWith("<?xml")) {
+    svgText = `<?xml version="1.0" encoding="UTF-8"?>\n` + svgText
+  }
+
+  // Download
+  const blob = new Blob([svgText], { type: "image/svg+xml;charset=utf-8" })
+  const url = URL.createObjectURL(blob)
+
+  const a = document.createElement("a")
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+
+  URL.revokeObjectURL(url)
 }
