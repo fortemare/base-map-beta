@@ -4,15 +4,19 @@
 let map = null
 const layers = {}
 const layerStates = {}
+let gridLayer = null
+let gridEnabled = true
+let baseNoLabels = null
 
 // Layer registry
 const layerRegistry = {
-  percorso_a: { url: "data/percorsi/percorso-a_consigliato.geojson", loader: loadPercorsoA, alwaysVisible: true },
+  percorso_a: { url: "data/percorsi/percorso-a_consigliato.geojson", loader: loadPercorsoA, alwaysVisible: false },
   percorso_marittimo: { url: "data/percorsi/percorso-marittimo.geojson", loader: loadPercorsoMarittimo, alwaysVisible: false },
   towers: { url: "data/towers.geojson", loader: loadPercorsoATorri, alwaysVisible: true },
-  aree_archeologiche: { url: "data/aree_archeologiche.geojson", loader: loadPercorsoAAreeArcheologiche, alwaysVisible: true },
-  aree_marine_protette: { url: "data/aree-marine-protette.geojson", loader: loadAreeMarineProtette, alwaysVisible: true },
-  riserve_regionali: { url: "data/riserve-regionali.geojson", loader: loadRiserveRegionali, alwaysVisible: true },
+  aree_archeologiche: { url: "data/aree_archeologiche.geojson", loader: loadPercorsoAAreeArcheologiche, alwaysVisible: false },
+  aree_marine_protette: { url: "data/aree-marine-protette.geojson", loader: loadAreeMarineProtette, alwaysVisible: false },
+  riserve_regionali: { url: "data/riserve-regionali.geojson", loader: loadRiserveRegionali, alwaysVisible: false },
+  percorso_a_estremi: { url: "data/percorso-a_estremi.geojson", loader: loadEstremiPercorso, alwaysVisible: false }, 
 }
 
 // cache per evitare duplicati (SVG inline)
@@ -52,10 +56,41 @@ function initializeMap() {
 
   map = L.map("map").setView([37.599, 14.015], 8)
 
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "© OpenStreetMap contributors",
+  // Base map pulita SENZA etichette (sempre ON)
+baseNoLabels = L.tileLayer(
+  "https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png",
+  {
+    attribution: "© OpenStreetMap contributors © CARTO",
     maxZoom: 19,
-  }).addTo(map)
+    crossOrigin: true,
+  }
+).addTo(map)
+
+// Overlay etichette (toggle)
+const labelsLayer = L.tileLayer(
+  "https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png",
+  {
+    attribution: "© OpenStreetMap contributors © CARTO",
+    maxZoom: 19,
+    crossOrigin: true,
+    pane: "overlayPane", // default, ma esplicito
+  }
+)
+
+// Registralo come “layer” normale così riusi toggleLayer/controls
+registerLayer("basemap_labels", labelsLayer)
+
+// Stato di default (spento)
+if (layerStates["basemap_labels"] === undefined) layerStates["basemap_labels"] = false
+
+
+  L.control.scale({
+  metric: true,
+  imperial: false,
+  position: "bottomleft", // o "bottomright"
+  maxWidth: 120
+}).addTo(map)
+
 
   map.on("zoomend", handleZoomChange)
 
@@ -63,13 +98,27 @@ function initializeMap() {
   document.getElementById("layer-controls").style.display = "block"
 
   loadGeoJSONLayers()
+
+  gridLayer = L.layerGroup().addTo(map)
+
+map.on("moveend zoomend", () => {
+  if (gridEnabled) drawMapGrid3857()
+})
+drawMapGrid3857()
+
+
 }
 
 // -------------------- Zoom & Visibility --------------------
 function canShowLayer(layerName, zoom) {
-  const SHAPES_MIN_ZOOM = 2
-  if (layerName === "percorso_a") return zoom >= SHAPES_MIN_ZOOM
-  return true
+    //console.log("canShowLayer", layerName, zoom);
+    // //const SHAPES_MIN_ZOOM = 2if (layerName === "percorso_a") return zoom >= 7
+    if (layerName === "aree_archeologiche") return zoom >= 12
+    if (layerName === "aree_marine_protette") return zoom >= 12
+    if (layerName === "riserve_regionali") return zoom >= 12
+    if (layerName === "percorso_marittimo") return zoom >= 12
+    if (layerName === "percorso_a_estremi") return zoom >= 12
+    return true
 }
 
 function handleZoomChange() {
@@ -352,6 +401,60 @@ async function ensureProj4(requiredCode) {
   }
 }
 
+function gridStepForZoom(z) {
+  if (z >= 13) return 1000
+  if (z >= 11) return 5000
+  if (z >= 9) return 10000
+  return 20000
+}
+
+function drawMapGrid3857() {
+  if (!map || !gridLayer) return
+
+  const bounds = map.getBounds()
+  const crs = map.options.crs // EPSG:3857 di default
+
+  // Proietta bounds nel CRS della mappa (metri in 3857)
+  const sw = crs.project(bounds.getSouthWest())
+  const ne = crs.project(bounds.getNorthEast())
+
+  const minX = Math.min(sw.x, ne.x)
+  const maxX = Math.max(sw.x, ne.x)
+  const minY = Math.min(sw.y, ne.y)
+  const maxY = Math.max(sw.y, ne.y)
+
+  const step = gridStepForZoom(map.getZoom())
+
+  const startX = Math.floor(minX / step) * step
+  const endX   = Math.ceil(maxX / step) * step
+  const startY = Math.floor(minY / step) * step
+  const endY   = Math.ceil(maxY / step) * step
+
+  gridLayer.clearLayers()
+
+  const lineStyle = {
+    weight: 1,
+    opacity: 0.6,
+    interactive: false,
+  }
+
+  // Verticali
+  for (let x = startX; x <= endX; x += step) {
+    const p1 = crs.unproject(L.point(x, startY))
+    const p2 = crs.unproject(L.point(x, endY))
+    gridLayer.addLayer(L.polyline([[p1.lat, p1.lng], [p2.lat, p2.lng]], lineStyle))
+  }
+
+  // Orizzontali
+  for (let y = startY; y <= endY; y += step) {
+    const p1 = crs.unproject(L.point(startX, y))
+    const p2 = crs.unproject(L.point(endX, y))
+    gridLayer.addLayer(L.polyline([[p1.lat, p1.lng], [p2.lat, p2.lng]], lineStyle))
+  }
+}
+
+
+
 function reprojectGeoJSON(geojson, fromProj = "EPSG:32633", toProj = "WGS84") {
   if (!geojson || !geojson.features) return
 
@@ -458,7 +561,7 @@ async function loadPercorsoA() {
     layerName: "percorso_a",
     url: "data/percorsi/percorso-a_consigliato.geojson",
     style: {
-      color: "#1100ffff",
+      color: "#ff5500",
       weight: 3,
       opacity: 1,
     },
@@ -482,6 +585,30 @@ async function loadPercorsoA() {
   }
 }
 
+// Estremi Percorso A (markers)
+async function loadEstremiPercorso() { 
+  const data = await loadGeoJsonReprojected("data/percorsi/percorso-a_estremi.geojson")
+
+  const startEndIcon = L.icon({
+    iconUrl: "icons/point.svg",
+    iconSize: [10, 20],
+    //iconAnchor: [8, 20],
+    popupAnchor: [0, -36],
+  })
+
+  const geo = L.geoJSON(data, {
+    pointToLayer: (feature, latlng) => {
+      const marker = L.marker(latlng, { icon: startEndIcon })
+      const title = feature.properties?.DENOM || feature.properties?.name || "Estremo Percorso A"
+      marker.bindPopup(`<strong>${title}</strong><br>${feature.properties?.description || ""}`)
+      return marker
+    },
+  })
+
+  registerLayer("percorso_a_estremi", geo)
+  if (canShowLayer("percorso_a_estremi", map.getZoom())) map.addLayer(geo)
+}
+
 // Percorso Marittimo (line)
 async function loadPercorsoMarittimo() {
   await buildGeoJsonLayer({
@@ -489,9 +616,9 @@ async function loadPercorsoMarittimo() {
     url: "data/percorsi/percorso-a_marittimo.geojson",
     style: {
       color: "#0000ffff",
-      weight: 3,
+      weight: 1,
       opacity: 1,
-      dashArray: "8,4",
+      dashArray: "4,2",
     },
     popupTitleFn: (f) =>
       f.properties?.DENOM || f.properties?.name || (f.properties?.id ? `ID: ${f.properties.id}` : ""),
@@ -507,16 +634,16 @@ async function loadPercorsoAAreeArcheologiche() {
     url: "data/aree-archeologiche.geojson",
     filterFn: (f) => f?.properties?.percorso === "percorso-a",
     style: () => ({
-      color: "#00aa00ff",
-      weight: 3,
+      color: "#aa8000ff",
+      weight: 2,
       opacity: 1,
-      fillOpacity: 1,
-      fillColor: "#ffffff", // base (verrà sovrascritto dal pattern via attribute)
+      fillOpacity: 0.3,
+      fillColor: "#aa8000ff", // base (verrà sovrascritto dal pattern via attribute)
     }),
     popupTitleFn: (f) =>
       f.properties?.DENOM || f.properties?.name || f.properties?.["SITIPOLY-ID"] || "",
     popupBodyFn: (f) => f.properties?.description || "",
-    inlinePattern: { id: "arch-pattern", url: "icons/arch-pattern.svg", w: 40, h: 40 },
+    //inlinePattern: { id: "arch-pattern", url: "icons/arch-pattern.svg", w: 40, h: 40 },
   })
 }
 
@@ -529,13 +656,13 @@ async function loadAreeMarineProtette() {
     style: () => ({
       color: "#0000ffff",
       weight: 2,
-      opacity: 0.7,
-      fillOpacity: 1,
-      fillColor: "#ffffff",
+      opacity: 1,
+      fillOpacity: 0.3,
+      fillColor: "#0000ffff",
     }),
     popupTitleFn: (f) => f.properties?.nome_gazze || "",
     popupBodyFn: (f) => f.properties?.description || "",
-    inlinePattern: { id: "aree-marine-pattern", url: "icons/aree-marine-pattern.svg", w: 18, h: 18 },
+    //inlinePattern: { id: "aree-marine-pattern", url: "icons/aree-marine-pattern.svg", w: 18, h: 18 },
   })
 }
 
@@ -549,12 +676,12 @@ async function loadRiserveRegionali() {
       color: "#8dcd1fff",
       weight: 2,
       opacity: 0.7,
-      fillOpacity: 1,
-      fillColor: "#ffffff",
+      fillOpacity: 0.3,
+      fillColor: "#8dcd1fff",
     }),
     popupTitleFn: (f) => f.properties?.nome_gazze || f.properties?.DENOM || f.properties?.name || "",
     popupBodyFn: (f) => f.properties?.description || "",
-    inlinePattern: { id: "riserve-pattern", url: "icons/riserve-pattern.svg", w: 30, h: 30 },
+    //inlinePattern: { id: "riserve-pattern", url: "icons/riserve-pattern.svg", w: 30, h: 30 },
   })
 }
 
@@ -569,7 +696,10 @@ async function loadPercorsoATorri() {
     popupAnchor: [0, -36],
   })
 
-  const markersCluster = L.markerClusterGroup()
+  // Usa l'icona cluster personalizzata
+  const markersCluster = L.markerClusterGroup({
+    iconCreateFunction: createTowerClusterIcon
+  })
 
   const geo = L.geoJSON(data, {
     filter: (feature) => feature?.properties?.percorso === "percorso-a",
@@ -585,6 +715,29 @@ async function loadPercorsoATorri() {
 
   registerLayer("towers", markersCluster)
   if (canShowLayer("towers", map.getZoom())) map.addLayer(markersCluster)
+}
+
+function createTowerClusterIcon(cluster) {
+  const count = cluster.getChildCount();
+  // SVG come stringa, puoi personalizzare dimensioni e posizione del testo
+  return L.divIcon({
+    html: `
+      <div style="position:relative; width:40px; height:40px;">
+        <img src="icons/tower.svg" style="width:40px; height:40px; display:block;" />
+        <span style="
+          position:absolute;
+          top:0; left:0; width:40px; height:40px;
+          display:flex; align-items:center; justify-content:center;
+          font-weight:bold; font-size:1.1em; color:#fff;
+          pointer-events:none;
+        ">${count}</span>
+      </div>
+    `,
+    className: "tower-cluster-icon",
+    iconSize: [40, 40],
+    iconAnchor: [20, 40],
+    popupAnchor: [0, -36],
+  });
 }
 
 // -------------------- SVG Pattern injection in Leaflet SVG <defs> --------------------
@@ -650,7 +803,6 @@ async function ensureSvgPattern(patternId, svgUrl, width = 40, height = 40) {
 
   return patternId
 }
-
 
 // -------------------- Export Leaflet Vectors to SVG --------------------      
 function exportLeafletVectorsToSVG(filename = "fortemare-vectors.svg") {
