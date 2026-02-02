@@ -57,10 +57,14 @@ body {
   background-color: var(--background);
 }
 
+.main-container.map {
+  overflow: hidden;
+}
+
 .container {
-  max-width: 1200px;
+  /*max-width: 1200px;*/
   margin: 0 auto;
-  padding: 1rem;
+  /*padding: 1rem;*/
 }
 
 .main-title {
@@ -99,6 +103,7 @@ body {
 
 .map-card {
   overflow: hidden;
+  height: 100vh;
 }
 
 /* Layer controls */
@@ -137,13 +142,14 @@ body {
 /* Map container */
 .map-container {
   width: 100%;
-  height: 24rem;
+  height: 100vh;
   min-height: 25rem;
 }
 
 @media (min-width: 768px) {
   .map-container {
-    height: 37.5rem;
+    /*height: 37.5rem;*/
+    height: 100vh;
   }
 }
 
@@ -181,6 +187,14 @@ body {
 .marker-cluster span {
   color: #ffffff !important;
   font-weight: 700;
+}
+
+/* EasyButton styles */
+
+.easy-button-button .button-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Responsive design */

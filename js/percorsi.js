@@ -7,13 +7,17 @@ const layerStates = {}
 let gridLayer = null
 let gridEnabled = true
 let baseNoLabels = null
+let currentDrawerData = null  // Salva i dati attuali del drawer/modal
+let wasDesktop = window.matchMedia('(min-width: 768px)').matches  // Track lo stato attuale
+let wasDrawerExplicitlyClosed = false  // Traccia se il drawer è stato chiuso esplicitamente
+let selectedTowerMarker = null  // Traccia il marker della torre selezionata
 
 // Layer registry
 const layerRegistry = {
   percorso_a: { url: "data/percorsi/percorso-a_consigliato.geojson", loader: loadPercorsoA, alwaysVisible: false },
   percorso_marittimo: { url: "data/percorsi/percorso-marittimo.geojson", loader: loadPercorsoMarittimo, alwaysVisible: false },
   towers: { url: "data/towers.geojson", loader: loadPercorsoATorri, alwaysVisible: true },
-  aree_archeologiche: { url: "data/aree_archeologiche.geojson", loader: loadPercorsoAAreeArcheologiche, alwaysVisible: false },
+  aree_archeologiche: { url: "data/aree-archeologiche.geojson", loader: loadPercorsoAAreeArcheologiche, alwaysVisible: false },
   aree_marine_protette: { url: "data/aree-marine-protette.geojson", loader: loadAreeMarineProtette, alwaysVisible: false },
   riserve_regionali: { url: "data/riserve-regionali.geojson", loader: loadRiserveRegionali, alwaysVisible: false },
   percorso_a_estremi: { url: "data/percorso-a_estremi.geojson", loader: loadEstremiPercorso, alwaysVisible: false }, 
@@ -24,6 +28,90 @@ const svgPatternsLoaded = new Set()
 
 // -------------------- Initialization --------------------
 document.addEventListener("DOMContentLoaded", () => {
+  // Inizializza il listener per chiudere la modal desktop
+  const modalCloseBtn = document.querySelector('.details-modal-close');
+  const modalOverlay = document.querySelector('.details-modal-overlay');
+  
+  if (modalCloseBtn) {
+    modalCloseBtn.addEventListener('click', closeDetailsModal);
+  }
+  
+  if (modalOverlay) {
+    modalOverlay.addEventListener('click', closeDetailsModal);
+  }
+  
+  // Listener per il resize della finestra (switch tra drawer e modal)
+  window.addEventListener('resize', () => {
+    const isDesktop = window.matchMedia('(min-width: 768px)').matches;
+    
+    if (isDesktop !== wasDesktop) {
+      // Il breakpoint è cambiato
+      wasDesktop = isDesktop;
+      
+      // Se c'è un drawer/modal aperto, passa all'altro formato
+      const drawerContent = document.querySelector('.cupertino-pane-content');
+      const modal = document.getElementById('details-modal');
+      const paneElement = document.querySelector('.cupertino-pane');
+      
+      // Se il drawer/modal è stato chiuso esplicitamente, non riaprire al resize
+      if (wasDrawerExplicitlyClosed) {
+        console.log('✓ Drawer was explicitly closed, not reopening on resize');
+        // Assicurati che sia la modal che il drawer siano chiusi
+        if (modal) modal.classList.remove('open');
+        if (drawerContent) drawerContent.innerHTML = '';
+        if (paneElement && paneElement.CupertinoPane) {
+          try {
+            if (paneElement.CupertinoPane.isPresented && paneElement.CupertinoPane.isPresented()) {
+              paneElement.CupertinoPane.hide();
+            }
+          } catch (err) {
+            console.warn('Error closing drawer:', err);
+          }
+        }
+        wasDrawerExplicitlyClosed = false;  // Reset flag after handling
+        return;
+      }
+      
+      if (currentDrawerData) {
+        if (!isDesktop && modal.classList.contains('open')) {
+          // Era desktop (modal aperta), passa a mobile (drawer)
+          modal.classList.remove('open');
+          presentDrawer(currentDrawerData);
+          console.log('✓ Switched to mobile drawer');
+        } else if (isDesktop && (drawerContent.innerHTML.trim() !== '' || (paneElement && paneElement.CupertinoPane && paneElement.CupertinoPane.isPresented()))) {
+          // Era mobile (drawer aperto), passa a desktop (modal)
+          // Chiudi il drawer esplicitamente
+          if (paneElement && paneElement.CupertinoPane) {
+            try {
+              paneElement.CupertinoPane.hide();
+              paneElement.CupertinoPane.destroy();
+              // Reinizializza il drawer per il prossimo uso su mobile
+              const newPane = new CupertinoPane('.cupertino-pane', { 
+                parentElement: 'body',
+                breaks: {
+                  middle: { enabled: true, height: 300, bounce: true },
+                  bottom: { enabled: true, height: 80 },
+                }
+              });
+              paneElement.CupertinoPane = newPane;
+            } catch (err) {
+              console.warn('Error closing drawer:', err);
+            }
+          }
+          // Pulisci il drawer
+          drawerContent.innerHTML = '';
+          // Apri la modal
+          presentDrawer(currentDrawerData);
+          console.log('✓ Switched to desktop modal');
+        }
+      } else {
+        // Se non c'è currentDrawerData, assicurati di chiudere sia modal che drawer
+        if (modal) modal.classList.remove('open');
+        if (drawerContent) drawerContent.innerHTML = '';
+      }
+    }
+  });
+  
   waitForLeaflet()
     .then(() => initializeMap())
     .catch((error) => {
@@ -66,6 +154,11 @@ baseNoLabels = L.tileLayer(
   }
 ).addTo(map)
 
+//EasyButton per toggle basemap labels
+const easyButton = L.easyButton('<img src="icons/point.svg" style="width:20px; height:20px;">', function(btn, map) {
+  centerMapOnVisibleLayers();
+}, { position: 'topleft' }).addTo(map);
+
 // Overlay etichette (toggle)
 const labelsLayer = L.tileLayer(
   "https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png",
@@ -91,20 +184,27 @@ if (layerStates["basemap_labels"] === undefined) layerStates["basemap_labels"] =
   maxWidth: 120
 }).addTo(map)
 
+miniMapUrl = "https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png"
+const miniMapLayer = L.tileLayer(miniMapUrl, {minZoom: 0, maxZoom: 19, crossOrigin: true})
+const miniMapControl = new L.Control.MiniMap(miniMapLayer, { toggleDisplay: true }).addTo(map)
 
   map.on("zoomend", handleZoomChange)
 
-  document.getElementById("loading").style.display = "none"
-  document.getElementById("layer-controls").style.display = "block"
+  const loadingEl = document.getElementById("loading");
+  if (loadingEl) loadingEl.style.display = "none";
+  
+  const controlsEl = document.getElementById("layer-controls");
+  if (controlsEl) controlsEl.style.display = "block";
 
   loadGeoJSONLayers()
 
   gridLayer = L.layerGroup().addTo(map)
 
-map.on("moveend zoomend", () => {
+/*map.on("moveend zoomend", () => {
   if (gridEnabled) drawMapGrid3857()
-})
-drawMapGrid3857()
+})*/
+
+//drawMapGrid3857()
 
 
 }
@@ -137,11 +237,50 @@ function handleZoomChange() {
   updateZoomBasedControlFeedback(currentZoom)
 }
 
+// Funzione per centrare la mappa su tutti i layer visibili
+function centerMapOnVisibleLayers() {
+  if (!map) return
+  
+  let allBounds = null
+  
+  Object.keys(layers).forEach((layerName) => {
+    const layer = layers[layerName]
+    if (!layer || !map.hasLayer(layer)) return
+    
+    try {
+      const bounds = layer.getBounds()
+      if (bounds && bounds.isValid && bounds.isValid()) {
+        if (!allBounds) {
+          allBounds = bounds
+        } else {
+          allBounds.extend(bounds)
+        }
+      }
+    } catch (e) {
+      // Alcuni layer potrebbero non avere getBounds
+      console.warn(`Cannot get bounds for ${layerName}:`, e)
+    }
+  })
+  
+  if (allBounds) {
+    try {
+      map.fitBounds(allBounds, { padding: [50, 50], maxZoom: 15 })
+      console.log('✓ Map centered on visible layers')
+    } catch (e) {
+      console.warn('Error fitting bounds:', e)
+    }
+  } else {
+    console.warn('No visible layers with bounds found')
+  }
+}
+
 // -------------------- Layer Control --------------------
 function toggleLayer(layerName) {
   if (!map || !layers[layerName]) return
 
   const checkbox = document.getElementById(layerName)
+  if (!checkbox) return  // Esci se il checkbox non esiste
+
   const newState = checkbox.checked
   layerStates[layerName] = newState
   const currentZoom = map.getZoom()
@@ -322,8 +461,11 @@ function updateLoadingProgress(message) {
 }
 
 function hideLoadingIndicator() {
-  document.getElementById("loading").style.display = "none"
-  document.getElementById("layer-controls").style.display = "block"
+  const loadingEl = document.getElementById("loading");
+  if (loadingEl) loadingEl.style.display = "none";
+  
+  const controlsEl = document.getElementById("layer-controls");
+  if (controlsEl) controlsEl.style.display = "block";
 }
 
 function showErrorMessage(message) {
@@ -452,8 +594,6 @@ function drawMapGrid3857() {
     gridLayer.addLayer(L.polyline([[p1.lat, p1.lng], [p2.lat, p2.lng]], lineStyle))
   }
 }
-
-
 
 function reprojectGeoJSON(geojson, fromProj = "EPSG:32633", toProj = "WGS84") {
   if (!geojson || !geojson.features) return
@@ -641,7 +781,7 @@ async function loadPercorsoAAreeArcheologiche() {
       fillColor: "#aa8000ff", // base (verrà sovrascritto dal pattern via attribute)
     }),
     popupTitleFn: (f) =>
-      f.properties?.DENOM || f.properties?.name || f.properties?.["SITIPOLY-ID"] || "",
+      f.properties?.DENOM || f.properties?.name || f.properties?.["SITIPOLY-ID"] || f.properties?.DESCRIZION || "",
     popupBodyFn: (f) => f.properties?.description || "",
     //inlinePattern: { id: "arch-pattern", url: "icons/arch-pattern.svg", w: 40, h: 40 },
   })
@@ -705,8 +845,24 @@ async function loadPercorsoATorri() {
     filter: (feature) => feature?.properties?.percorso === "percorso-a",
     pointToLayer: (feature, latlng) => {
       const marker = L.marker(latlng, { icon: towerIcon })
-      const title = feature.properties?.DENOM || feature.properties?.name || "Torre"
-      marker.bindPopup(`<strong>${title}</strong><br>${feature.properties?.description || ""}`)
+      
+      // Rendi il marker accessibile da tastiera
+      marker.options.keyboard = true;
+      
+      // Aggiungi evento click
+      marker.on('click', function () {
+        selectTowerMarker(marker);
+        presentDrawer(feature.properties);
+      });
+      
+      // Aggiungi evento tastiera (Invio)
+      marker.on('keydown', function(e) {
+        if (e.originalEvent.key === 'Enter') {
+          selectTowerMarker(marker);
+          presentDrawer(feature.properties);
+        }
+      });
+      
       return marker
     },
   })
@@ -717,27 +873,24 @@ async function loadPercorsoATorri() {
   if (canShowLayer("towers", map.getZoom())) map.addLayer(markersCluster)
 }
 
-function createTowerClusterIcon(cluster) {
-  const count = cluster.getChildCount();
-  // SVG come stringa, puoi personalizzare dimensioni e posizione del testo
-  return L.divIcon({
-    html: `
-      <div style="position:relative; width:40px; height:40px;">
-        <img src="icons/tower.svg" style="width:40px; height:40px; display:block;" />
-        <span style="
-          position:absolute;
-          top:0; left:0; width:40px; height:40px;
-          display:flex; align-items:center; justify-content:center;
-          font-weight:bold; font-size:1.1em; color:#fff;
-          pointer-events:none;
-        ">${count}</span>
-      </div>
-    `,
-    className: "tower-cluster-icon",
-    iconSize: [40, 40],
-    iconAnchor: [20, 40],
-    popupAnchor: [0, -36],
-  });
+// Funzione per selezionare e evidenziare una torre
+function selectTowerMarker(marker) {
+  // Rimuovi lo stile dal marker precedente
+  if (selectedTowerMarker && selectedTowerMarker !== marker) {
+    const oldElement = selectedTowerMarker.getElement();
+    if (oldElement) {
+      oldElement.classList.remove('tower-marker-selected');
+    }
+  }
+  
+  // Aggiungi lo stile al nuovo marker
+  selectedTowerMarker = marker;
+  const element = marker.getElement();
+  if (element) {
+    element.classList.add('tower-marker-selected');
+  }
+  
+  console.log('✓ Tower marker selected');
 }
 
 // -------------------- SVG Pattern injection in Leaflet SVG <defs> --------------------
@@ -847,4 +1000,151 @@ function exportLeafletVectorsToSVG(filename = "fortemare-vectors.svg") {
   a.remove()
 
   URL.revokeObjectURL(url)
+}
+
+function createTowerClusterIcon(cluster) {
+  const count = cluster.getChildCount();
+  return L.divIcon({
+    html: `
+      <div style="position:relative; width:40px; height:40px;">
+        <img src="icons/tower.svg" style="width:40px; height:40px; display:block;" />
+        <span style="
+          position:absolute;
+          top:0; left:0; width:40px; height:40px;
+          display:flex; align-items:center; justify-content:center;
+          font-weight:bold; font-size:1.1em; color:#fff;
+          pointer-events:none;
+        ">${count}</span>
+      </div>
+    `,
+    className: "tower-cluster-icon",
+    iconSize: [40, 40],
+    iconAnchor: [20, 40],
+    popupAnchor: [0, -36],
+  });
+}
+
+// Funzione per presentare il drawer/modal con i dati della torre
+function presentDrawer(properties) {
+  console.log('presentDrawer called with properties:', properties);
+  
+  // Salva i dati attuali per il resize handler
+  currentDrawerData = properties;
+  // Resetta il flag di chiusura esplicita quando si apre un nuovo drawer/modal
+  wasDrawerExplicitlyClosed = false;
+  
+  // Crea HTML con tutte le proprietà
+  const html = Object.entries(properties)
+    .map(([key, value]) => {
+      const val = value !== null && value !== undefined ? value : '—';
+      return `<div style="margin-bottom: 12px;"><strong>${key}:</strong> ${val}</div>`;
+    })
+    .join('');
+  
+  // Rileva se è mobile o desktop
+  const isMobile = window.matchMedia('(max-width: 767px)').matches;
+  
+  if (isMobile) {
+    // Mobile: usa Cupertino Pane
+    const drawerContent = document.querySelector('.cupertino-pane-content');
+    if (!drawerContent) {
+      console.error('ERROR: drawer content element not found');
+      return;
+    }
+    
+    drawerContent.innerHTML = html;
+    
+    const paneElement = document.querySelector('.cupertino-pane');
+    if (paneElement && paneElement.CupertinoPane) {
+      paneElement.CupertinoPane.present({animate: true});
+      console.log('✓ Mobile drawer presented');
+      
+      // Aggiungi listener al destroy-button dopo che il drawer è stato presentato
+      setTimeout(() => {
+        // Cerca il destroy-button in vari posti
+        let destroyBtn = drawerContent.querySelector('.destroy-button');
+        console.log('1. In drawerContent:', destroyBtn);
+        
+        if (!destroyBtn) {
+          destroyBtn = document.querySelector('.cupertino-pane .destroy-button');
+          console.log('2. In .cupertino-pane:', destroyBtn);
+        }
+        
+        if (!destroyBtn) {
+          destroyBtn = document.querySelector('.destroy-button');
+          console.log('3. In document:', destroyBtn);
+        }
+        
+        if (!destroyBtn) {
+          // Stampa tutti gli elementi del drawer per debug
+          console.log('Drawer content HTML:', drawerContent.innerHTML);
+          console.log('Drawer structure:', drawerContent);
+        }
+        
+        if (destroyBtn) {
+          destroyBtn.addEventListener('click', () => {
+            console.log('✓ destroy-button clicked');
+            closeDetailsModal();
+          });
+          console.log('✓ destroy-button listener attached');
+        } else {
+          console.warn('⚠ destroy-button not found anywhere');
+        }
+      }, 100);
+    } else {
+      console.error('ERROR: Cupertino Pane instance not found on element');
+    }
+  } else {
+    // Desktop: usa Modal Sidebar
+    const modal = document.getElementById('details-modal');
+    const modalBody = document.querySelector('.details-modal-body');
+    
+    if (!modal || !modalBody) {
+      console.error('ERROR: modal elements not found');
+      return;
+    }
+    
+    modalBody.innerHTML = html;
+    modal.classList.add('open');
+    console.log('✓ Desktop modal presented');
+  }
+}
+
+// Funzione per chiudere la modal desktop
+function closeDetailsModal() {
+  const modal = document.getElementById('details-modal');
+  const drawerContent = document.querySelector('.cupertino-pane-content');
+  const paneElement = document.querySelector('.cupertino-pane');
+  
+  if (modal) {
+    modal.classList.remove('open');
+  }
+  
+  // Pulisci anche il drawer se è aperto
+  if (paneElement && paneElement.CupertinoPane) {
+    try {
+      if (paneElement.CupertinoPane.isPresented && paneElement.CupertinoPane.isPresented()) {
+        paneElement.CupertinoPane.hide();
+      }
+    } catch (err) {
+      console.warn('Error closing drawer:', err);
+    }
+  }
+  
+  if (drawerContent) {
+    drawerContent.innerHTML = '';
+  }
+  
+  // Deseleziona il marker della torre
+  if (selectedTowerMarker) {
+    const element = selectedTowerMarker.getElement();
+    if (element) {
+      element.classList.remove('tower-marker-selected');
+    }
+    selectedTowerMarker = null;
+  }
+  
+  currentDrawerData = null;  // Clear i dati salvati
+  wasDrawerExplicitlyClosed = true;  // Segna che è stato chiuso esplicitamente
+  console.log('✓ Drawer/Modal closed');
 }

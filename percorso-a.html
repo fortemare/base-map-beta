@@ -19,12 +19,63 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
     
+    <!-- Cupertino Pane CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/cupertino-pane/dist/cupertino-pane.min.css" />
+    
+    <!-- Cupertino Pane JS -->
+    <script src="https://unpkg.com/cupertino-pane/dist/cupertino-pane.min.js"></script>
+
+    <!-- Leaflet EasyButton -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-easybutton@2/src/easy-button.css">
+
+    <!-- Control MiniMap CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-minimap@3.6.1/dist/Control.MiniMap.min.css" />
+    
     <!-- Custom CSS -->
     <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/modal.css">
+
+    <!-- Cupertino Pane JS Init -->
+    <script>
+        window.onload = function () {
+            const paneElement = document.querySelector('.cupertino-pane');
+            const myPane = new CupertinoPane(
+                '.cupertino-pane', // Pane container selector
+                { 
+                    parentElement: 'body', // Parent container
+                    breaks: {
+                        middle: { enabled: true, height: 300, bounce: true },
+                        bottom: { enabled: true, height: 80 },
+                    },
+                    events: {
+                        onDrag: () => console.log('Drag event'),
+                        onHide: () => {
+                            console.log('Drawer hidden');
+                            if (window.closeDetailsModal) {
+                                window.closeDetailsModal();
+                            }
+                        }
+                    }
+                }
+            );
+            
+            // Salva l'istanza sull'elemento per accedervi dopo
+            paneElement.CupertinoPane = myPane;
+            window.drawer = myPane;
+            
+            console.log('✓ Cupertino Pane initialized');
+        };
+    </script>
+
+  <style>
+    .cupertino-pane-wrapper .pane {
+        z-index: 9999;
+    }
+  </style>
     
 </head>
 <body>
-    <main class="main-container">
+    <main class="main-container map">
         <div class="container">
     
             <!-- Loading indicator -->
@@ -32,7 +83,7 @@
                 <div class="loading-text">Loading map...</div>
             </div>
             
-            <!-- Layer Controls -->
+            <!-- Layer Controls
             <div id="layer-controls" class="layer-controls-card" style="display: none;">
                 <div class="controls-grid">
                     <div class="control-item">
@@ -65,11 +116,26 @@
                         <label for="basemap_labels" class="control-label">Etichette</label>
                     </div>
                 </div>
-            </div>
+            </div> -->
             
             <!-- Map Container -->
             <div class="map-card">
                 <div id="map" class="map-container"></div>
+            </div>
+        </div>
+
+        <div class="cupertino-pane">
+            <div class="cupertino-pane-content">
+            <!-- I dati vengono inseriti qui -->
+            </div>
+        </div>
+
+        <!-- Desktop Modal (Sidebar) -->
+        <div id="details-modal" class="details-modal">
+            <div class="details-modal-overlay"></div>
+            <div class="details-modal-content">
+                <button class="details-modal-close">&times;</button>
+                <div class="details-modal-body"></div>
             </div>
         </div>
     </main>
@@ -80,6 +146,12 @@
     
     <!-- Leaflet MarkerCluster JS -->
     <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+    
+    <!-- Leaflet EasyButton -->
+    <script src="https://cdn.jsdelivr.net/npm/leaflet-easybutton@2/src/easy-button.js"></script>
+    
+    <!-- Control MiniMap JS -->
+    <script src="https://unpkg.com/leaflet-minimap@3.6.1/dist/Control.MiniMap.min.js"></script>
     
     <!-- Custom JavaScript -->
     <script src="js/percorsi.js"></script>
